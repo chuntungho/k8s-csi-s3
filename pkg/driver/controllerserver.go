@@ -34,6 +34,17 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 )
 
+const (
+	// NameTemplateKey is the StorageClass parameter for customizing the bucket/prefix name.
+	// Supported variables: ${pvc.name}, ${pvc.namespace}, ${pv.name}
+	NameTemplateKey = "nameTemplate"
+
+	// Well-known CSI parameters injected by the external-provisioner sidecar.
+	pvcNameKey      = "csi.storage.k8s.io/pvc-name"
+	pvcNamespaceKey = "csi.storage.k8s.io/pvc-namespace"
+	pvNameKey       = "csi.storage.k8s.io/pv-name"
+)
+
 type controllerServer struct {
 	csi.UnimplementedControllerServer
 	driver *driver
@@ -45,6 +56,18 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	volumeID := sanitizeVolumeID(req.GetName())
 	bucketName := volumeID
 	prefix := ""
+
+	// If nameTemplate is set, derive bucket/prefix name from PVC/PV metadata
+	// instead of the opaque PV UUID name.
+	if tmpl := params[NameTemplateKey]; tmpl != "" {
+		derived := strings.NewReplacer(
+			"${pvc.name}", params[pvcNameKey],
+			"${pvc.namespace}", params[pvcNamespaceKey],
+			"${pv.name}", params[pvNameKey],
+		).Replace(tmpl)
+		volumeID = sanitizeVolumeID(derived)
+		bucketName = volumeID
+	}
 
 	// check if bucket name is overridden
 	if params[mounter.BucketKey] != "" {
