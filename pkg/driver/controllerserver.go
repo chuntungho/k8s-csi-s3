@@ -39,10 +39,17 @@ const (
 	// Supported variables: ${pvc.name}, ${pvc.namespace}, ${pv.name}
 	NameTemplateKey = "nameTemplate"
 
-	// Well-known CSI parameters injected by the external-provisioner sidecar.
+	// Well-known CSI parameters injected by the external-provisioner sidecar
+	// (--extra-create-metadata flag). The provisioner may use either dashes
+	// (standard CSI spec, external-provisioner v2+) or slashes (older Yandex
+	// mirror of the provisioner), so we check both forms.
 	pvcNameKey      = "csi.storage.k8s.io/pvc-name"
 	pvcNamespaceKey = "csi.storage.k8s.io/pvc-namespace"
 	pvNameKey       = "csi.storage.k8s.io/pv-name"
+
+	pvcNameKeySlash      = "csi.storage.k8s.io/pvc/name"
+	pvcNamespaceKeySlash = "csi.storage.k8s.io/pvc/namespace"
+	pvNameKeySlash       = "csi.storage.k8s.io/pv/name"
 )
 
 type controllerServer struct {
@@ -63,9 +70,9 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	// instead of the opaque PV UUID name.
 	if tmpl := params[NameTemplateKey]; tmpl != "" {
 		derived := strings.NewReplacer(
-			"${pvc.name}", params[pvcNameKey],
-			"${pvc.namespace}", params[pvcNamespaceKey],
-			"${pv.name}", params[pvNameKey],
+			"${pvc.name}", provisionerParam(params, pvcNameKey, pvcNameKeySlash),
+			"${pvc.namespace}", provisionerParam(params, pvcNamespaceKey, pvcNamespaceKeySlash),
+			"${pv.name}", provisionerParam(params, pvNameKey, pvNameKeySlash),
 		).Replace(tmpl)
 		sanitized := sanitizeVolumeID(derived)
 		if err := validateBucketName(sanitized, tmpl, params); err != nil {
@@ -265,28 +272,37 @@ func (cs *controllerServer) ControllerModifyVolume(ctx context.Context, req *csi
 	return nil, status.Error(codes.Unimplemented, "ControllerModifyVolume is not implemented")
 }
 
+// provisionerParam returns the value for a CSI metadata key injected by the
+// external-provisioner. It checks the standard dash form (CSI spec / v2+) first,
+// then the slash form used by older Yandex-mirrored provisioner builds.
+func provisionerParam(params map[string]string, dashKey, slashKey string) string {
+	if v := params[dashKey]; v != "" {
+		return v
+	}
+	return params[slashKey]
+}
+
 // validateBucketName checks that the name derived from nameTemplate satisfies
 // S3 bucket naming constraints and that all template variables resolved to
 // non-empty values. Returns a descriptive error so operators can fix the
 // StorageClass or provisioner RBAC rather than chasing a cryptic S3 error.
 func validateBucketName(name, tmpl string, params map[string]string) error {
 	if len(name) < 3 {
-		// Identify which variables are missing to give an actionable message.
 		missing := []string{}
-		if strings.Contains(tmpl, "${pvc.name}") && params[pvcNameKey] == "" {
-			missing = append(missing, "${pvc.name} (csi.storage.k8s.io/pvc-name)")
+		if strings.Contains(tmpl, "${pvc.name}") && provisionerParam(params, pvcNameKey, pvcNameKeySlash) == "" {
+			missing = append(missing, fmt.Sprintf("${pvc.name} (%s or %s)", pvcNameKey, pvcNameKeySlash))
 		}
-		if strings.Contains(tmpl, "${pvc.namespace}") && params[pvcNamespaceKey] == "" {
-			missing = append(missing, "${pvc.namespace} (csi.storage.k8s.io/pvc-namespace)")
+		if strings.Contains(tmpl, "${pvc.namespace}") && provisionerParam(params, pvcNamespaceKey, pvcNamespaceKeySlash) == "" {
+			missing = append(missing, fmt.Sprintf("${pvc.namespace} (%s or %s)", pvcNamespaceKey, pvcNamespaceKeySlash))
 		}
-		if strings.Contains(tmpl, "${pv.name}") && params[pvNameKey] == "" {
-			missing = append(missing, "${pv.name} (csi.storage.k8s.io/pv-name)")
+		if strings.Contains(tmpl, "${pv.name}") && provisionerParam(params, pvNameKey, pvNameKeySlash) == "" {
+			missing = append(missing, fmt.Sprintf("${pv.name} (%s or %s)", pvNameKey, pvNameKeySlash))
 		}
 		if len(missing) > 0 {
 			return fmt.Errorf(
 				"nameTemplate %q resolved to %q (too short for S3, minimum 3 characters); "+
-					"the following variables were empty — ensure your external-provisioner version "+
-					"injects PVC/PV metadata into CreateVolume parameters: %s",
+					"the following variables were empty — ensure --extra-create-metadata is set "+
+					"on the external-provisioner: %s",
 				tmpl, name, strings.Join(missing, ", "))
 		}
 		return fmt.Errorf(
