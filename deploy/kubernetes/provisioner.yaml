@@ -80,6 +80,7 @@ spec:
           args:
             - "--csi-address=$(ADDRESS)"
             - "--v=4"
+            - "--extra-create-metadata"
           env:
             - name: ADDRESS
               value: /var/lib/kubelet/plugins/ru.yandex.s3.csi/csi.sock
