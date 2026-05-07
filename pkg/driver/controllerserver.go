@@ -65,7 +65,11 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 			"${pvc.namespace}", params[pvcNamespaceKey],
 			"${pv.name}", params[pvNameKey],
 		).Replace(tmpl)
-		volumeID = sanitizeVolumeID(derived)
+		sanitized := sanitizeVolumeID(derived)
+		if err := validateBucketName(sanitized, tmpl, params); err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		volumeID = sanitized
 		bucketName = volumeID
 	}
 
@@ -257,6 +261,42 @@ func (cs *controllerServer) ControllerGetVolume(ctx context.Context, req *csi.Co
 
 func (cs *controllerServer) ControllerModifyVolume(ctx context.Context, req *csi.ControllerModifyVolumeRequest) (*csi.ControllerModifyVolumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "ControllerModifyVolume is not implemented")
+}
+
+// validateBucketName checks that the name derived from nameTemplate satisfies
+// S3 bucket naming constraints and that all template variables resolved to
+// non-empty values. Returns a descriptive error so operators can fix the
+// StorageClass or provisioner RBAC rather than chasing a cryptic S3 error.
+func validateBucketName(name, tmpl string, params map[string]string) error {
+	if len(name) < 3 {
+		// Identify which variables are missing to give an actionable message.
+		missing := []string{}
+		if strings.Contains(tmpl, "${pvc.name}") && params[pvcNameKey] == "" {
+			missing = append(missing, "${pvc.name} (csi.storage.k8s.io/pvc-name)")
+		}
+		if strings.Contains(tmpl, "${pvc.namespace}") && params[pvcNamespaceKey] == "" {
+			missing = append(missing, "${pvc.namespace} (csi.storage.k8s.io/pvc-namespace)")
+		}
+		if strings.Contains(tmpl, "${pv.name}") && params[pvNameKey] == "" {
+			missing = append(missing, "${pv.name} (csi.storage.k8s.io/pv-name)")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf(
+				"nameTemplate %q resolved to %q (too short for S3, minimum 3 characters); "+
+					"the following variables were empty — ensure your external-provisioner version "+
+					"injects PVC/PV metadata into CreateVolume parameters: %s",
+				tmpl, name, strings.Join(missing, ", "))
+		}
+		return fmt.Errorf(
+			"nameTemplate %q resolved to %q which is too short for S3 (minimum 3 characters)",
+			tmpl, name)
+	}
+	if strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") {
+		return fmt.Errorf(
+			"nameTemplate %q resolved to %q which starts or ends with a hyphen — invalid S3 bucket name",
+			tmpl, name)
+	}
+	return nil
 }
 
 func sanitizeVolumeID(volumeID string) string {
