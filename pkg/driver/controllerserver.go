@@ -57,6 +57,8 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 	bucketName := volumeID
 	prefix := ""
 
+	glog.V(4).Infof("CreateVolume: name=%s parameters=%v", req.GetName(), params)
+
 	// If nameTemplate is set, derive bucket/prefix name from PVC/PV metadata
 	// instead of the opaque PV UUID name.
 	if tmpl := params[NameTemplateKey]; tmpl != "" {
