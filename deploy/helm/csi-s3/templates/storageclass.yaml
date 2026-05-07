@@ -14,6 +14,9 @@ parameters:
 {{- if .Values.storageClass.singleBucket }}
   bucket: "{{ .Values.storageClass.singleBucket }}"
 {{- end }}
+{{- if .Values.storageClass.nameTemplate }}
+  nameTemplate: "{{ .Values.storageClass.nameTemplate }}"
+{{- end }}
   csi.storage.k8s.io/provisioner-secret-name: {{ .Values.secret.name }}
   csi.storage.k8s.io/provisioner-secret-namespace: {{ .Release.Namespace }}
   csi.storage.k8s.io/controller-publish-secret-name: {{ .Values.secret.name }}
