@@ -73,7 +73,20 @@ func fuseMount(path string, command string, args []string, envs []string) error 
 
 func Unmount(path string) error {
 	if err := mount.New("").Unmount(path); err != nil {
-		return err
+		// Stale bind mounts over a dead FUSE process return EINVAL ("Invalid
+		// argument"). Fall back to a lazy unmount which detaches the mount
+		// from the namespace immediately without needing the underlying
+		// filesystem to be accessible.
+		glog.Warningf("unmount of %s failed (%v), retrying with lazy unmount", path, err)
+		if out, lazyErr := exec.Command("umount", "-l", path).CombinedOutput(); lazyErr != nil {
+			// If the path is no longer a mountpoint the goal is already achieved.
+			if notMnt, _ := mount.New("").IsLikelyNotMountPoint(path); notMnt {
+				glog.V(3).Infof("unmount of %s: path is not a mountpoint, treating as success", path)
+				return nil
+			}
+			glog.Errorf("lazy unmount of %s failed: %v (output: %s)", path, lazyErr, strings.TrimSpace(string(out)))
+			return err
+		}
 	}
 	return nil
 }
@@ -112,7 +125,7 @@ func SystemdUnmount(volumeID string) (bool, error) {
 }
 
 func FuseUnmount(path string) error {
-	if err := mount.New("").Unmount(path); err != nil {
+	if err := Unmount(path); err != nil {
 		return err
 	}
 	// as fuse quits immediately, we will try to wait until the process is done
