@@ -94,6 +94,17 @@ func (client *s3Client) BucketExists(bucketName string) (bool, error) {
 	return client.minio.BucketExists(client.ctx, bucketName)
 }
 
+// IsBucketNotFound returns true when the S3 error indicates the bucket does
+// not exist (NoSuchBucket).  Using the error code avoids fragile string
+// matching against provider-specific messages that may or may not have a
+// trailing period.
+func IsBucketNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return minio.ToErrorResponse(err).Code == "NoSuchBucket"
+}
+
 func (client *s3Client) CreateBucket(bucketName string) error {
 	return client.minio.MakeBucket(client.ctx, bucketName, minio.MakeBucketOptions{Region: client.Config.Region})
 }
