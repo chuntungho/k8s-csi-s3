@@ -160,8 +160,14 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 		}
 		glog.V(4).Infof("Bucket %s removed", bucketName)
 	} else {
-		if err := client.RemovePrefix(bucketName, prefix); err != nil {
-			deleteErr = fmt.Errorf("unable to remove prefix: %w", err)
+		// Check existence first: if the bucket is already gone the prefix is gone too.
+		exists, err := client.BucketExists(bucketName)
+		if err != nil {
+			deleteErr = fmt.Errorf("failed to check if bucket %s exists: %w", bucketName, err)
+		} else if exists {
+			if err := client.RemovePrefix(bucketName, prefix); err != nil {
+				deleteErr = fmt.Errorf("unable to remove prefix: %w", err)
+			}
 		}
 		glog.V(4).Infof("Prefix %s removed", prefix)
 	}
